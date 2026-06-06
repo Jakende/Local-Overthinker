@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+Build/
+.swiftpm/
+.vite/
+
+node_modules/
+dist/
+
+docs/.DS_Store
+docs/screenshots/.DS_Store

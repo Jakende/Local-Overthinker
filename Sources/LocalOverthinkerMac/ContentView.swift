@@ -40,10 +40,46 @@ struct ContentView: View {
                     axis: .vertical
                 )
                 .textFieldStyle(.roundedBorder)
+                .disabled(!store.canEditCurrentSession)
 
                 Text("Copied fragments appear automatically. Manual notes remain optional.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Session History")
+                        .font(.headline)
+
+                    Spacer()
+
+                    if store.isViewingArchivedSession {
+                        Button("Back to Active") {
+                            store.returnToActiveSession()
+                        }
+                        .font(.caption)
+                    }
+                }
+
+                List(store.sessionHistory, selection: Binding(
+                    get: { store.currentSession?.id },
+                    set: { newValue in
+                        guard let newValue,
+                              let session = store.sessionHistory.first(where: { $0.id == newValue }) else {
+                            return
+                        }
+                        store.selectSession(session)
+                    }
+                )) { session in
+                    SessionRow(
+                        session: session,
+                        isSelected: session.id == store.currentSession?.id,
+                        timestampLabel: store.timestampLabel(for: session.updatedAt)
+                    )
+                }
+                .frame(minHeight: 132, maxHeight: 180)
+                .listStyle(.sidebar)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -62,6 +98,7 @@ struct ContentView: View {
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(.separator, lineWidth: 1)
                     )
+                    .disabled(!store.canEditCurrentSession)
 
                 HStack {
                     Text("\(store.currentArtifacts.count) memory items")
@@ -71,7 +108,7 @@ struct ContentView: View {
                     Button("Store Note") {
                         store.storeManualNote()
                     }
-                    .disabled(store.manualNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(store.manualNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !store.canEditCurrentSession)
                 }
             }
 
@@ -123,6 +160,11 @@ struct ContentView: View {
                 .font(.title2.bold())
             Text("Quiet local reflections over clipboard fragments, notes, and semantically related memory.")
                 .foregroundStyle(.secondary)
+            if let session = store.currentSession {
+                Text(session.status == .active ? "Active session" : "Session history view")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -178,7 +220,7 @@ struct ContentView: View {
     private var runBar: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(store.currentSession?.topic.isEmpty == false ? "Current reflection context is ready" : "Set a current topic to begin")
+                Text(runBarTitle)
                     .font(.headline)
                 Text(store.jobMessage)
                     .font(.caption)
@@ -360,9 +402,49 @@ struct ContentView: View {
         }
     }
 
+    private var runBarTitle: String {
+        if store.isViewingArchivedSession {
+            return "Archived sessions are read-only"
+        }
+
+        return store.currentSession?.topic.isEmpty == false ? "Current reflection context is ready" : "Set a current topic to begin"
+    }
+
     private func previewText(for reflection: ReflectionRecord) -> String {
         let firstSection = ReflectionEngine.parseSections(from: reflection.content).first?.body ?? reflection.content
         return firstSection.replacingOccurrences(of: "\n", with: " ")
+    }
+}
+
+private struct SessionRow: View {
+    let session: Session
+    let isSelected: Bool
+    let timestampLabel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(session.topic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled session" : session.topic)
+                    .lineLimit(2)
+                    .font(.body)
+
+                Spacer(minLength: 6)
+
+                if session.status == .active {
+                    Text("active")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            }
+
+            Text(timestampLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .background(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
     }
 }
 

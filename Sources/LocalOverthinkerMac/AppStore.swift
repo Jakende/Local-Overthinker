@@ -69,6 +69,31 @@ final class AppStore: ObservableObject {
         state.sessions.first(where: { $0.id == state.currentSessionId })
     }
 
+    var activeSession: Session? {
+        state.sessions
+            .filter { $0.status == .active }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .first
+    }
+
+    var sessionHistory: [Session] {
+        state.sessions.sorted { left, right in
+            if left.status != right.status {
+                return left.status == .active
+            }
+
+            return left.updatedAt > right.updatedAt
+        }
+    }
+
+    var isViewingArchivedSession: Bool {
+        currentSession?.status == .archived
+    }
+
+    var canEditCurrentSession: Bool {
+        currentSession?.status == .active
+    }
+
     var currentArtifacts: [Artifact] {
         guard let sessionID = currentSession?.id else { return [] }
         return state.artifacts
@@ -100,6 +125,10 @@ final class AppStore: ObservableObject {
     }
 
     var canRunReflection: Bool {
+        guard canEditCurrentSession else {
+            return false
+        }
+
         guard let topic = currentSession?.topic.trimmingCharacters(in: .whitespacesAndNewlines), !topic.isEmpty else {
             return false
         }
@@ -108,6 +137,10 @@ final class AppStore: ObservableObject {
     }
 
     func updateTopic(_ topic: String) {
+        guard canEditCurrentSession else {
+            return
+        }
+
         guard let sessionID = state.currentSessionId,
               let index = state.sessions.firstIndex(where: { $0.id == sessionID }) else {
             return
@@ -119,7 +152,7 @@ final class AppStore: ObservableObject {
     }
 
     func startNewSession() {
-        if let sessionID = state.currentSessionId,
+        if let sessionID = activeSession?.id,
            let index = state.sessions.firstIndex(where: { $0.id == sessionID }) {
             state.sessions[index].status = .archived
             state.sessions[index].updatedAt = Date()
@@ -135,11 +168,26 @@ final class AppStore: ObservableObject {
         addLog(.info, "Started new session")
     }
 
+    func selectSession(_ session: Session) {
+        state.currentSessionId = session.id
+        selectedReflectionID = nil
+        manualNote = ""
+        saveState()
+        addLog(.info, session.status == .active ? "Returned to active session" : "Opened archived session")
+    }
+
+    func returnToActiveSession() {
+        guard let activeSession else { return }
+        selectSession(activeSession)
+    }
+
     func captureClipboardNow() {
+        guard canEditCurrentSession else { return }
         processClipboardText(NSPasteboard.general.string(forType: .string) ?? "", sourceType: .clipboard, originatedFromWatcher: false)
     }
 
     func storeManualNote() {
+        guard canEditCurrentSession else { return }
         let trimmed = manualNote.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         addArtifact(trimmed, sourceType: .manual)
@@ -215,6 +263,12 @@ final class AppStore: ObservableObject {
     }
 
     func runReflection(force: Bool = false) {
+        guard canEditCurrentSession else {
+            jobState = .error
+            jobMessage = "Archived sessions are read-only. Return to the active session to reflect again."
+            return
+        }
+
         Task {
             await performReflection(force: force)
         }

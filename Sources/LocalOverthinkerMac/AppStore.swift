@@ -15,14 +15,14 @@ final class AppStore: ObservableObject {
     }
     @Published private(set) var archiveResults: [ReflectionRecord] = []
     @Published private(set) var jobState: JobState = .idle
-    @Published private(set) var jobMessage = "Quietly waiting for the next reflection window."
+    @Published private(set) var jobMessage = "Quietly waiting for new clipboard activity."
     @Published private(set) var ollamaStatus: OllamaStatus = .checking
     @Published private(set) var lastBackgroundCaptureAt: Date?
     @Published private(set) var clipboardStatus: ClipboardSourceStatus = .inactive
+    @Published private(set) var availableOllamaModels: [String] = []
     @Published private(set) var logEntries: [LogEntry] = []
     @Published var selectedReflectionID: UUID?
 
-    private let client = OllamaClient()
     private let systemPrompt = ReflectionEngine.loadSystemPrompt()
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -63,6 +63,10 @@ final class AppStore: ObservableObject {
     deinit {
         clipboardTimer?.invalidate()
         reflectionTimer?.invalidate()
+    }
+
+    private var client: OllamaClient {
+        OllamaClient(settings: state.ollamaSettings)
     }
 
     var currentSession: Session? {
@@ -124,6 +128,37 @@ final class AppStore: ObservableObject {
         state.lastReflectionRunAt?.addingTimeInterval(Self.reflectionWindow)
     }
 
+    var ollamaSettings: OllamaSettings {
+        state.ollamaSettings
+    }
+
+    var automaticReflectionStatusText: String {
+        guard canEditCurrentSession else {
+            return "Paused while browsing archived sessions"
+        }
+
+        guard let pendingDate = latestPendingClipboardCaptureDate else {
+            return "Waiting for new clipboard captures"
+        }
+
+        if let lastRun = state.lastReflectionRunAt, pendingDate <= lastRun {
+            return "Clipboard is up to date"
+        }
+
+        let dueDate: Date
+        if let lastRun = state.lastReflectionRunAt {
+            dueDate = max(lastRun.addingTimeInterval(Self.reflectionWindow), pendingDate)
+        } else {
+            dueDate = pendingDate.addingTimeInterval(Self.reflectionWindow)
+        }
+
+        if dueDate <= Date() {
+            return "A background reflection is due"
+        }
+
+        return "Next automatic reflection \(relativeLabel(for: dueDate))"
+    }
+
     var canRunReflection: Bool {
         guard canEditCurrentSession else {
             return false
@@ -134,6 +169,44 @@ final class AppStore: ObservableObject {
         }
 
         return !isRunningReflection
+    }
+
+    func updateReflectionModel(_ model: String) {
+        guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        state.ollamaSettings.reflectionModel = model
+        saveState()
+    }
+
+    func updateEmbeddingModel(_ model: String) {
+        guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        state.ollamaSettings.embeddingModel = model
+        saveState()
+    }
+
+    func updateTemperature(_ value: Double) {
+        state.ollamaSettings.runtime.temperature = min(max(value, 0), 2)
+        saveState()
+    }
+
+    func updateContextWindow(_ value: Int) {
+        state.ollamaSettings.runtime.numContextTokens = max(512, value)
+        saveState()
+    }
+
+    func updateMaxOutputTokens(_ value: Int) {
+        state.ollamaSettings.runtime.maxOutputTokens = max(64, value)
+        saveState()
+    }
+
+    func updateThreadCount(_ value: Int) {
+        state.ollamaSettings.runtime.numThreads = max(1, value)
+        saveState()
+    }
+
+    func refreshAvailableModels() {
+        Task {
+            await refreshAvailableModelsAsync()
+        }
     }
 
     func updateTopic(_ topic: String) {
@@ -276,18 +349,20 @@ final class AppStore: ObservableObject {
 
     func relativeLabel(for date: Date?) -> String {
         guard let date else { return "not yet" }
-        let minutes = max(1, Int(Date().timeIntervalSince(date) / 60))
+        let delta = Date().timeIntervalSince(date)
+        let isFuture = delta < 0
+        let minutes = max(1, Int(abs(delta) / 60))
         if minutes < 60 {
-            return "\(minutes)m ago"
+            return isFuture ? "in \(minutes)m" : "\(minutes)m ago"
         }
 
         let hours = Int(round(Double(minutes) / 60))
         if hours < 24 {
-            return "\(hours)h ago"
+            return isFuture ? "in \(hours)h" : "\(hours)h ago"
         }
 
         let days = Int(round(Double(hours) / 24))
-        return "\(days)d ago"
+        return isFuture ? "in \(days)d" : "\(days)d ago"
     }
 
     func timestampLabel(for date: Date) -> String {
@@ -335,6 +410,7 @@ final class AppStore: ObservableObject {
 
         Task {
             await refreshOllamaStatus()
+            await refreshAvailableModelsAsync()
             await refreshArchiveResultsAsync()
         }
     }
@@ -431,11 +507,38 @@ final class AppStore: ObservableObject {
         ollamaStatus = await client.checkHealth() ? .online : .offline
     }
 
-    private func runScheduledReflectionIfNeeded() async {
-        guard let lastRun = state.lastReflectionRunAt else { return await performReflection(force: false) }
-        if Date().timeIntervalSince(lastRun) >= Self.reflectionWindow {
-            await performReflection(force: false)
+    private func refreshAvailableModelsAsync() async {
+        guard ollamaStatus == .online else {
+            availableOllamaModels = fallbackModelList()
+            return
         }
+
+        do {
+            let models = try await client.listModels()
+            availableOllamaModels = mergedModelList(with: models)
+        } catch {
+            availableOllamaModels = fallbackModelList()
+            addLog(.warning, "Failed to refresh Ollama model list")
+        }
+    }
+
+    private func runScheduledReflectionIfNeeded() async {
+        guard canEditCurrentSession else { return }
+        guard hasPendingClipboardActivityForAutomaticReflection() else {
+            if jobState == .idle {
+                jobMessage = "Quietly waiting for new clipboard activity."
+            }
+            return
+        }
+
+        let now = Date()
+        if let lastRun = state.lastReflectionRunAt {
+            guard now.timeIntervalSince(lastRun) >= Self.reflectionWindow else { return }
+        } else if let pendingDate = latestPendingClipboardCaptureDate {
+            guard now.timeIntervalSince(pendingDate) >= Self.reflectionWindow else { return }
+        }
+
+        await performReflection(force: false)
     }
 
     private func performReflection(force: Bool) async {
@@ -542,6 +645,36 @@ final class AppStore: ObservableObject {
         jobMessage = force ? "Reflection regenerated." : "Latest reflection is ready."
         refreshArchiveResults()
         addLog(.success, "Generated reflection")
+    }
+
+    private var latestPendingClipboardCaptureDate: Date? {
+        let lastRun = state.lastReflectionRunAt
+        return currentArtifacts
+            .filter { $0.sourceType == .clipboard }
+            .map(\.createdAt)
+            .filter { date in
+                if let lastRun {
+                    return date > lastRun
+                }
+
+                return true
+            }
+            .max()
+    }
+
+    private func hasPendingClipboardActivityForAutomaticReflection() -> Bool {
+        latestPendingClipboardCaptureDate != nil
+    }
+
+    private func fallbackModelList() -> [String] {
+        mergedModelList(with: [])
+    }
+
+    private func mergedModelList(with models: [String]) -> [String] {
+        Array(
+            Set(models + [state.ollamaSettings.reflectionModel, state.ollamaSettings.embeddingModel])
+        )
+        .sorted()
     }
 
     private func gatherQueryVectors(topic: String, recentArtifacts: [Artifact], previousReflections: [ReflectionRecord]) async throws -> [[Double]] {

@@ -2,7 +2,7 @@
 
 Local Overthinker is a local-first macOS utility for quietly reflecting on what you are copying, collecting, and writing while you work.
 
-It watches the clipboard in the background, stores captured fragments locally, retrieves semantically related older material, and periodically generates a structured reflection with a small local Ollama model.
+It watches the clipboard in the background, stores captured fragments locally, retrieves semantically related older material, and generates structured reflections with a small local Ollama model when there is fresh clipboard activity.
 
 ## Screenshots
 
@@ -16,9 +16,11 @@ It watches the clipboard in the background, stores captured fragments locally, r
 - Captures copied text fragments in the background on macOS.
 - Accepts optional manual notes without forcing chat-style interaction.
 - Generates structured reflections on a timed window or manual rerun.
+- Skips idle automatic reflections when nothing new has been copied.
 - Retrieves semantically related older artifacts and reflections.
 - Stores everything locally in Application Support.
 - Exports reflections as Markdown with YAML front matter including generated tags.
+- Lets you change local Ollama models and core runtime parameters from the app.
 
 ## Native App Structure
 
@@ -38,7 +40,7 @@ Default local models:
 - Reflection model: `qwen3:0.6b`
 - Embedding model: `nomic-embed-text`
 
-These defaults are defined in [OllamaClient.swift](Sources/LocalOverthinkerMac/OllamaClient.swift).
+These defaults are persisted in app state and can be changed from the settings panel.
 
 ## Requirements
 
@@ -186,11 +188,10 @@ Markdown export writes YAML front matter with:
 
 ## Current Status
 
-This repository currently ships the native SwiftUI app source and SwiftPM build configuration.
+This repository ships the native SwiftUI app source, SwiftPM build configuration, `.app` packaging, local signing, and notarization scripts.
 
-It does not yet include:
+One thing it still does not include is:
 
-- notarization/signing setup
 - automatic migration from the earlier browser `localStorage` prototype
 
 ## License

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -10,6 +11,15 @@ struct ContentView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    openSettingsWindow()
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+            }
+        }
     }
 
     private var sidebar: some View {
@@ -19,11 +29,13 @@ struct ContentView: View {
                     store.captureClipboardNow()
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
 
                 Button("Start New Session") {
                     store.startNewSession()
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(store.jobState == .running)
             }
 
@@ -101,13 +113,14 @@ struct ContentView: View {
                     .disabled(!store.canEditCurrentSession)
 
                 HStack {
-                    Text("\(store.currentArtifacts.count) memory items")
+                    Text(memoryCountLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button("Store Note") {
                         store.storeManualNote()
                     }
+                    .controlSize(.small)
                     .disabled(store.manualNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !store.canEditCurrentSession)
                 }
             }
@@ -143,7 +156,7 @@ struct ContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                settingsPanel
+                statusPanel
                 runBar
                 reflectionPanel
                 archivePanel
@@ -155,62 +168,55 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Local Overthinker")
-                .font(.title2.bold())
-            Text("Quiet local reflections over clipboard fragments, notes, and semantically related memory.")
-                .foregroundStyle(.secondary)
-            if let session = store.currentSession {
-                Text(session.status == .active ? "Active session" : "Session history view")
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Local Overthinker")
+                    .font(.title2.bold())
+                Text("Quiet local reflections over clipboard fragments and stored memory.")
+                    .foregroundStyle(.secondary)
+                if let session = store.currentSession {
+                    Text(session.status == .active ? "Active session" : "Session history view")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            if store.isViewingArchivedSession {
+                Text("Read-only")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
-    private var settingsPanel: some View {
-        Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 14) {
-            GridRow {
-                Text("Models")
-                Text("\(storeModelName) + \(embeddingModelName)")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    private var statusPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(
+                columns: [
+                    GridItem(.adaptive(minimum: 160, maximum: 220), alignment: .leading)
+                ],
+                alignment: .leading,
+                spacing: 12
+            ) {
+                StatusItem(title: "Ollama", value: ollamaStatusLabel, valueColor: ollamaStatusColor)
+                StatusItem(
+                    title: "Clipboard",
+                    value: store.clipboardStatus == .active ? "Watching" : "Unavailable",
+                    valueColor: .secondary
+                )
+                StatusItem(title: "Auto Reflection", value: store.automaticReflectionStatusText, valueColor: .secondary)
+                StatusItem(title: "Last Run", value: store.relativeLabel(for: store.state.lastReflectionRunAt), valueColor: .secondary)
             }
 
-            GridRow {
-                Text("Ollama")
-                Text(ollamaStatusLabel)
-                    .foregroundStyle(ollamaStatusColor)
-            }
-
-            GridRow {
-                Text("Clipboard")
-                Text(store.clipboardStatus == .active ? "Background watcher active" : "Watcher unavailable")
-                    .foregroundStyle(.secondary)
-            }
-
-            GridRow {
-                Text("Last Run")
-                Text(store.relativeLabel(for: store.state.lastReflectionRunAt))
-                    .foregroundStyle(.secondary)
-            }
-
-            GridRow {
-                Text("Next Window")
-                Text(store.nextReflectionDate.map(store.relativeLabel(for:)) ?? "now")
-                    .foregroundStyle(.secondary)
-            }
-
-            GridRow {
-                Text("Data")
-                HStack(spacing: 8) {
-                    Text(AppPaths.userDataDirectory.lastPathComponent)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Button("Open") {
-                        store.openDataFolder()
-                    }
+            HStack {
+                Spacer()
+                Button("Open Data Folder") {
+                    store.openDataFolder()
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
         }
         .padding(18)
@@ -225,7 +231,8 @@ struct ContentView: View {
                 Text(store.jobMessage)
                     .font(.caption)
                     .foregroundStyle(store.jobState == .running ? .primary : .secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer()
@@ -239,6 +246,7 @@ struct ContentView: View {
                 store.runReflection(force: true)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.small)
             .disabled(!store.canRunReflection)
         }
     }
@@ -262,11 +270,13 @@ struct ContentView: View {
                     Button("Copy") {
                         store.copyDisplayedReflection()
                     }
+                    .controlSize(.small)
                     .disabled(store.displayedReflection == nil)
 
                     Button("Save") {
                         store.saveDisplayedReflection()
                     }
+                    .controlSize(.small)
                     .disabled(store.displayedReflection == nil)
 
                     Button("Mark Important") {
@@ -274,6 +284,7 @@ struct ContentView: View {
                             store.toggleReflectionImportant(reflection)
                         }
                     }
+                    .controlSize(.small)
                     .disabled(store.displayedReflection == nil)
                 }
             }
@@ -312,10 +323,12 @@ struct ContentView: View {
                 Button("Use Latest") {
                     store.selectedReflectionID = nil
                 }
+                .controlSize(.small)
                 .disabled(store.latestReflection == nil)
                 Button("Reset Store") {
                     store.resetLocalStore()
                 }
+                .controlSize(.small)
                 .disabled(store.jobState == .running)
             }
 
@@ -372,14 +385,6 @@ struct ContentView: View {
         }
     }
 
-    private var storeModelName: String {
-        OllamaSettings.default.reflectionModel
-    }
-
-    private var embeddingModelName: String {
-        OllamaSettings.default.embeddingModel
-    }
-
     private var ollamaStatusLabel: String {
         switch store.ollamaStatus {
         case .checking:
@@ -413,6 +418,34 @@ struct ContentView: View {
     private func previewText(for reflection: ReflectionRecord) -> String {
         let firstSection = ReflectionEngine.parseSections(from: reflection.content).first?.body ?? reflection.content
         return firstSection.replacingOccurrences(of: "\n", with: " ")
+    }
+
+    private var memoryCountLabel: String {
+        let count = store.currentArtifacts.count
+        return count == 1 ? "1 memory item" : "\(count) memory items"
+    }
+
+    private func openSettingsWindow() {
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+}
+
+private struct StatusItem: View {
+    let title: String
+    let value: String
+    let valueColor: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(valueColor)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -479,12 +512,15 @@ private struct ArtifactRow: View {
                 Button(artifact.kept ? "Unkeep" : "Keep") {
                     store.toggleArtifactKept(artifact)
                 }
+                .controlSize(.small)
                 Button(artifact.pinned ? "Unpin" : "Pin") {
                     store.toggleArtifactPinned(artifact)
                 }
+                .controlSize(.small)
                 Button("Delete") {
                     store.deleteArtifact(artifact)
                 }
+                .controlSize(.small)
             }
             .buttonStyle(.borderless)
             .font(.caption)
@@ -553,15 +589,21 @@ private struct FlowTagView: View {
     let tags: [String]
 
     var body: some View {
-        HStack(spacing: 6) {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 96), spacing: 6, alignment: .leading)],
+            alignment: .leading,
+            spacing: 6
+        ) {
             ForEach(tags, id: \.self) { tag in
                 Text(tag)
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

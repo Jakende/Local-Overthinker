@@ -13,5 +13,10 @@ struct LocalOverthinkerMacApp: App {
         .commands {
             CommandGroup(replacing: .newItem) { }
         }
+
+        Settings {
+            SettingsView()
+                .environmentObject(store)
+        }
     }
 }

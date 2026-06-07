@@ -17,6 +17,21 @@ struct OllamaClient {
         }
     }
 
+    func listModels() async throws -> [String] {
+        let request = URLRequest(url: settings.baseURL.appendingPathComponent("api/tags"))
+        let data = try await performData(for: request, timeout: 8)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["models"] as? [[String: Any]] else {
+            return []
+        }
+
+        return models
+            .compactMap { model in
+                (model["model"] as? String) ?? (model["name"] as? String)
+            }
+            .sorted()
+    }
+
     func embedText(_ input: String) async throws -> [Double] {
         var request = URLRequest(url: settings.baseURL.appendingPathComponent("api/embed"))
         request.httpMethod = "POST"
@@ -63,16 +78,16 @@ struct OllamaClient {
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": settings.reflectionModel,
             "stream": false,
-            "keep_alive": "0m",
+            "keep_alive": settings.runtime.keepAlive,
             "messages": [
                 ["role": "system", "content": system],
                 ["role": "user", "content": user]
             ],
             "options": [
-                "temperature": 0.2,
-                "num_ctx": 2048,
-                "num_predict": 320,
-                "num_thread": 2
+                "temperature": settings.runtime.temperature,
+                "num_ctx": settings.runtime.numContextTokens,
+                "num_predict": settings.runtime.maxOutputTokens,
+                "num_thread": settings.runtime.numThreads
             ]
         ])
 
